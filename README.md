@@ -1,5 +1,8 @@
 # Task Platform — Distributed Job Queue + Observability
 
+<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/908f21f6-5d55-4a6a-9a58-6c902ef5bcf8" />
+
+
 A small distributed task-processing platform built to demonstrate **reliable async jobs**, **failure handling (DLQ)**, and **real metrics-driven observability** using **FastAPI + RabbitMQ + Postgres + Prometheus + Grafana** (Docker Compose).
 
 **Measured throughput (2,000-task load test):**
