@@ -1,0 +1,22 @@
+
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "api"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: "rabbitmq"
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: "worker"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "task-platform-worker-2:8001"
+          - "task-platform-worker-3:8001"
+          - "task-platform-worker-4:8001"
