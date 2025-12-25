@@ -3,119 +3,199 @@
 <img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/908f21f6-5d55-4a6a-9a58-6c902ef5bcf8" />
 
 
-A small distributed task-processing platform built to demonstrate **reliable async jobs**, **failure handling (DLQ)**, and **real metrics-driven observability** using **FastAPI + RabbitMQ + Postgres + Prometheus + Grafana** (Docker Compose).
+A distributed task-processing platform that demonstrates reliable async job execution, failure handling with retries + DLQ, and metrics-driven observability using FastAPI + RabbitMQ + Postgres + Prometheus + Grafana (Docker Compose).
 
-**Measured throughput (2,000-task load test):**
-- **31.25 tasks/sec** with **1 worker**
-- **41.7 tasks/sec** with **3 workers** (**~+33%** throughput improvement)
+Measured throughput (2,000-task end-to-end load test):
 
----
+31.25 tasks/sec with 1 worker (2000 / 64s)
 
-## Architecture (Pipeline)
+~41.7 tasks/sec with 3 workers (~+33% improvement)
 
-**FastAPI Task Submission API → RabbitMQ Durable Queue → Worker Consumers (scaled) → Postgres Task Lifecycle**  
-**Failure Handling + DLQ** for tasks that exceed retries  
-**Prometheus + Grafana** for metrics, queue depth, and rate panels
+What this project proves (Success Criteria)
 
-Core components:
-- **API (FastAPI)**: `POST /tasks`, idempotency-based deduplication, validates payload, persists initial task row in Postgres
-- **RabbitMQ**: durable queue `tasks`, dead-letter queue `tasks.dlq`
-- **Workers**: ack on success, retry on failure (max retries), update Postgres task status
-- **Postgres**: task lifecycle state machine `QUEUED → PROCESSING → SUCCEEDED/FAILED`
-- **Observability**: Prometheus scrapes API + worker metrics + RabbitMQ per-queue metrics (`/metrics/per-object`), Grafana dashboards
+Reliable at-least-once processing: messages are only ACKed after durable DB state updates
 
----
+Retries + DLQ: poison tasks retry up to max_retries, then dead-letter to tasks.dlq
 
-## Tech Stack
+Persistent task lifecycle in Postgres: QUEUED → PROCESSING → SUCCEEDED/FAILED
 
-- **API**: FastAPI (Python)
-- **Queue**: RabbitMQ (durable queue + DLQ)
-- **DB**: Postgres
-- **Cache**: Redis (service included)
-- **Observability**: Prometheus + Grafana
-- **Infra**: Docker Compose
+Observable system: Prometheus + Grafana dashboards for rates + queue depth
 
----
+Scales with workers: measurable throughput improvement from 1 → 3 workers
 
-## Features
+Architecture
 
-- **Idempotent task submission** via `Idempotency-Key` header (safe retries from clients)
-- **Durable message processing** with RabbitMQ (`tasks` queue)
-- **Worker scaling** with Docker Compose (`--scale worker=N`)
-- **Retries + DLQ routing** when retries are exhausted (`tasks.dlq`)
-- **Task lifecycle persisted** in Postgres for auditability and crash-safe recovery
-- **Prometheus + Grafana dashboards** for processed/min, failed/min, retried/min, and queue depth (`tasks`, `tasks.dlq`)
+FastAPI (Task API) → RabbitMQ (durable queue) → Workers (scaled consumers) → Postgres (task state)
+Prometheus scrapes API + Workers + RabbitMQ (per-queue) → Grafana dashboards
 
----
+Queues:
 
-## Quickstart
+tasks (durable main queue)
 
-### 1) Start the stack
+tasks.dlq (dead-letter queue for permanently failing tasks)
 
+Tech Stack
+
+API: FastAPI (Python)
+
+Queue: RabbitMQ (durable queue + DLQ)
+
+DB: Postgres
+
+Cache: Redis (included in stack for caching / future idempotency improvements)
+
+Observability: Prometheus + Grafana
+
+Infra: Docker Compose
+
+Key Features
+
+Idempotent submission via Idempotency-Key header (safe client retries without duplicate tasks)
+
+Durable async execution with RabbitMQ queue buffering
+
+At-least-once semantics (ACK only after DB is updated to final state)
+
+Retry + DLQ routing when retries are exhausted
+
+Postgres audit trail with timestamps for queue wait + processing time analysis
+
+Metrics exposed from API + workers on /metrics and from RabbitMQ via per-object metrics
+
+Grafana dashboards showing processed/failed/retried rates and queue depths (tasks, tasks.dlq)
+
+Quickstart
+1) Start the stack
 cd task-platform
 docker compose up -d --build
 docker compose ps
+
 2) Open UIs
+
 API: http://localhost:8000
 
 Prometheus: http://localhost:9090
 
-Grafana: http://localhost:3000 (admin / admin)
+Grafana: http://localhost:3000
+ (admin / admin)
 
-RabbitMQ UI: http://localhost:15672 (guest / guest)
+RabbitMQ UI: http://localhost:15672
+ (guest / guest)
 
 Submit Tasks
 Good task
-bash
-- -
 curl -s -X POST http://localhost:8000/tasks \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: demo-good-1" \
   -d '{"task_type":"sum","payload":{"numbers":[1,2,3,4,5]},"max_retries":2}'
-Bad task (forces failure path / DLQ after retries)
-bash
-- -
+
+Bad task (forces retries → DLQ)
 curl -s -X POST http://localhost:8000/tasks \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: demo-bad-1" \
   -d '{"task_type":"nope","payload":{"x":1},"max_retries":2}'
+
 Observability
-Prometheus queries (examples)
-Worker health:
+Metrics Endpoints
+
+API metrics: http://localhost:8000/metrics
+
+Worker metrics: exposed per worker container (scraped internally by Prometheus)
+
+RabbitMQ per-queue metrics (critical for queue-labeled series):
+
+http://rabbitmq:15692/metrics/per-object
+
+Useful Prometheus Queries
+
+Worker health (when scaled):
 
 up{job="worker"}
 
-Total processed:
+
+Total processed (across all workers):
 
 sum(worker_tasks_processed_total)
 
-Queue depth (RabbitMQ per-queue):
+
+Processed per minute:
+
+60 * rate(worker_tasks_processed_total[1m])
+
+
+Failed per minute:
+
+60 * rate(worker_tasks_failed_total[1m])
+
+
+Retried per minute:
+
+60 * rate(worker_tasks_retried_total[1m])
+
+
+Queue depth (per queue):
+
+rabbitmq_queue_messages_ready{queue="tasks"}
+rabbitmq_queue_messages_ready{queue="tasks.dlq"}
+
+Debugging Prometheus Targets
+curl -s http://localhost:9090/api/v1/targets | head
+curl -s http://localhost:9090/api/v1/status/config | head
+
+Grafana Dashboards
+
+This project includes dashboards that show system behavior (not just raw counters):
+
+Rate Panels (Time Series)
+
+Processed/min: 60 * rate(worker_tasks_processed_total[1m])
+
+Failed/min: 60 * rate(worker_tasks_failed_total[1m])
+
+Retried/min: 60 * rate(worker_tasks_retried_total[1m])
+
+Queue Depth (Stat Panels)
 
 rabbitmq_queue_messages_ready{queue="tasks"}
 
 rabbitmq_queue_messages_ready{queue="tasks.dlq"}
 
-RabbitMQ metrics endpoint
-Prometheus scrapes per-queue metrics from:
-
-http://rabbitmq:15692/metrics/per-object
-
 Scaling Workers
-Scale workers to 3:
 
-bash
-- -
+Scale to 3 workers:
+
 docker compose up -d --scale worker=3 --force-recreate worker
 docker compose ps | grep worker
-Scale back to 1:
 
-bash
-- -
+
+Scale back to 1 worker:
+
 docker compose up -d --scale worker=1 --force-recreate worker
-Benchmark (2,000 tasks)
-Run a 2,000-task load test (client-side)
-bash
-- -
+
+
+Note: workers should not bind conflicting host ports. They run on internal Docker networking and are scraped by Prometheus inside the Compose network.
+
+Benchmarking (2,000 Tasks)
+
+This project distinguishes:
+
+API submit rate (how fast you can POST)
+
+True end-to-end worker throughput (what actually gets processed)
+
+End-to-end throughput method
+
+Record start value: sum(worker_tasks_processed_total)
+
+Submit N = 2000 tasks
+
+Wait for RabbitMQ queue to drain (tasks ready/unacked → 0)
+
+Record end value and elapsed time
+
+Compute: throughput = processed_delta / elapsed_time
+
+Client-side submit + queue-drain wait
 RUN=$(date +%s)
 N=2000
 T0=$(date +%s)
@@ -124,6 +204,7 @@ for i in $(seq 1 $N); do
   curl -s -X POST http://localhost:8000/tasks \
     -H "Content-Type: application/json" \
     -H "Idempotency-Key: bench-$RUN-$i" \
+    -H "Content-Type: application/json" \
     -d '{"task_type":"sum","payload":{"numbers":[1,2,3,4,5]},"max_retries":2}' >/dev/null
 done
 
@@ -140,29 +221,53 @@ T1=$(date +%s)
 python3 - <<PY
 elapsed=$((T1-T0))
 print("elapsed_sec:", elapsed)
-print("approx_rate_tasks_per_sec:", $N / max(1, elapsed))
+print("approx_end_to_end_tasks_per_sec:", $N / max(1, elapsed))
 PY
-Observed results (my runs):
+
+Results (my runs)
 
 1 worker: 31.25 tasks/sec
 
-3 workers: 41.7 tasks/sec (~+33%)
+3 workers: ~41.7 tasks/sec (~+33%)
+
+Reliability Proof (Retries + DLQ)
+
+To validate the failure path:
+
+Submit an invalid task_type with max_retries=2
+
+Confirm retries increase:
+
+worker_tasks_retried_total
+
+Confirm DLQ depth increases after retries exhausted:
+
+rabbitmq_queue_messages_ready{queue="tasks.dlq"}
+
+Confirm Postgres records permanent failure state
+
+This proves predictable behavior under failures, not just “happy path” success.
 
 Repository Structure
-graphql
-
 task-platform/
-  api/                 # FastAPI service
-  worker/              # worker consumers
+  api/                    # FastAPI task submission service
+  worker/                 # worker consumers
   observability/
-    prometheus.yml     # Prometheus scrape config
-    rabbitmq.conf      # RabbitMQ Prometheus plugin config
+    prometheus.yml        # Prometheus scrape config
+    rabbitmq.conf         # RabbitMQ Prometheus plugin / metrics config
   docker-compose.yml
+
 Notes / Gotchas
-Prometheus query syntax: use job="worker" inside label braces, e.g. up{job="worker"}.
 
-If Prometheus shows stale worker targets after recreates, restart Prometheus:
+RabbitMQ queue-labeled metrics require scraping:
 
+http://rabbitmq:15692/metrics/per-object
+If you scrape the wrong endpoint, you may only see aggregates without queue="..." labels.
+
+Prometheus query labels must be inside braces, e.g.:
+
+up{job="worker"}
+
+If Prometheus shows stale worker targets after scaling/recreate:
 
 docker compose restart prometheus
-DLQ (tasks.dlq) may be non-zero if you intentionally submit invalid tasks.
